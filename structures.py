@@ -1,34 +1,20 @@
 import json
+from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Set, Optional, Generator
-
-from utils import BloomFilter
+from typing import List, Set, Generator, Tuple
 
 BASES = ['A', 'C', 'G', 'T']
 
 
 @dataclass
-class Kmer:
-    sequence: str
-
-    def __str__(self):
-        return f'Kmer {self.sequence}'
-
-    def __repr__(self):
-        return self.sequence
-
-    def __hash__(self):
-        return self.sequence.__hash__()
-
-
-@dataclass
 class GenomeRead:
     label: str
+    category: str
     sequence: str
 
-    def iterate_kmers(self, k: int) -> Generator[Kmer, None, None]:
+    def iterate_kmers(self, k: int) -> Generator[str, None, None]:
         for start in range(len(self.sequence) - (k - 1)):
-            yield Kmer(self.sequence[start:start + k])
+            yield self.sequence[start:start + k]
 
     def __str__(self):
         return f'>{self.label}\n{"".join(self.sequence)}'
@@ -42,6 +28,7 @@ class GenomeMetaData:
     difference: float = 0
     read_length: int = 0
     circular: bool = True
+    categories: Tuple[str, str] = ('A', 'B')
 
     def __str__(self):
         return json.dumps(dict(
@@ -49,8 +36,9 @@ class GenomeMetaData:
             coverage=self.coverage,
             num_of_reads=self.num_of_reads,
             read_length=self.read_length,
-            difference=self.difference
-        ))
+            difference=self.difference,
+            categories=self.categories
+        ), indent=4)
 
     @classmethod
     def from_string(cls, string):
@@ -64,76 +52,78 @@ class GenomeMetaData:
             return
 
 
+@dataclass
 class GenomeReadData:
     label: str
-    characteristic_kmers: BloomFilter
-    characteristic_kmers_count: int
+    category: str
+    characteristic_kmers: Set[str]
 
-    def __init__(self, label):
-        self.label = label
-
-    def index_characteristic_kmers(self, genome_read: GenomeRead, characteristic_kmer_set: Set[str], estimated_size: int) -> int:
-        k: int = len(next(iter(characteristic_kmer_set)))
-        self.characteristic_kmers = BloomFilter(estimated_size, 0.01)
-        characteristic, total = 0, 0
-        for kmer in genome_read.iterate_kmers(k):
-            if kmer.sequence in characteristic_kmer_set:
-                self.characteristic_kmers.add(kmer.sequence)
-                characteristic += 1
-
-            total += 1
-
-        self.characteristic_kmers_count = characteristic
-        return characteristic
+    @property
+    def characteristic_kmers_count(self):
+        return len(self.characteristic_kmers)
 
     def __hash__(self):
         return self.label
 
     def __repr__(self):
-        return f'{self.label}: {self.characteristic_kmers_count} characteristic kmers, {self.characteristic_kmers}'
+        return f'{self.label}: {self.characteristic_kmers_count} characteristic kmers'
+
+    def __copy__(self):
+        return GenomeReadData(label=self.label, category=self.category, characteristic_kmers=self.characteristic_kmers.copy())
 
     @classmethod
     def from_json(cls, data) -> 'GenomeReadData':
-        obj = cls(data['label'])
-        obj.characteristic_kmers_count = data['characteristic_kmer_count']
-        return obj
+        return cls(
+            label=data['label'],
+            category=data['category'],
+            characteristic_kmers=set(data['characteristic_kmers'])
+        )
 
     def to_json(self) -> dict:
         return dict(
             label=self.label,
-            characteristic_kmer_count=self.characteristic_kmers_count,
-            characteristic_kmers=self.characteristic_kmers.bit_array.to01() if self.characteristic_kmers else ''
+            category=self.category,
+            characteristic_kmers=list(self.characteristic_kmers)
         )
 
 
 @dataclass
 class GenomeReadCluster:
     reference_id: int
-    characteristic_kmers: Optional[BloomFilter]
     reads: List[GenomeReadData]
+    characteristic_kmers: Set[str]
 
     @property
     def size(self):
         return len(self.reads)
 
-    def clear(self):
-        self.characteristic_kmers = None
-        self.reads = []
+    @property
+    def consistency(self):
+        category_counts = defaultdict(int)
+        for read in self.reads:
+            category_counts[read.category] += 1
+        return '/'.join(map(str, category_counts.values()))
 
     @property
-    def labels(self):
-        return ','.join([read.label for read in self.reads])[:200]
+    def categories(self) -> Set[str]:
+        return set([read.category for read in self.reads])
 
-    @property
-    def stats(self):
-        a_reads = len([x for x in self.reads if x.label[0] == 'A'])
-        b_reads = len([x for x in self.reads if x.label[0] != 'A'])
-        return f'#{self.reference_id} size {self.size} A {a_reads}/{b_reads} B'
+    def copy(self):
+        return GenomeReadCluster(
+            reference_id=self.reference_id,
+            characteristic_kmers=self.characteristic_kmers.copy(),
+            reads=self.reads[::]
+        )
 
     def __ior__(self, other: 'GenomeReadCluster'):
         self.reads.extend(other.reads)
         self.characteristic_kmers |= other.characteristic_kmers
         return self
+
+    def __or__(self, other: 'GenomeReadCluster'):
+        copy = self.copy()
+        copy |= other
+        return copy
 
     def __eq__(self, other: 'GenomeReadCluster'):
         return self.reference_id == other.reference_id
@@ -142,4 +132,4 @@ class GenomeReadCluster:
         return self.reference_id
 
     def __repr__(self):
-        return f'Cluster #{self.reference_id} of size {self.size} kmers {self.characteristic_kmers}'
+        return f'#{self.reference_id}({len(self.characteristic_kmers)})[{self.consistency}]'

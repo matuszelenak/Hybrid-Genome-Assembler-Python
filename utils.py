@@ -3,7 +3,6 @@ from typing import Iterable
 
 import mmh3
 from bitarray import bitarray
-from matplotlib import pyplot as plt
 
 
 class BloomFilter:
@@ -39,24 +38,27 @@ class BloomFilter:
         k = (m / n) * math.log(2)
         return int(k)
 
-    @property
-    def estimated_item_count(self):
-        return (self.size / self.hash_count) * math.log(self.size / self.bit_array.count(False))
+    def __len__(self):
+        return round((self.size / self.hash_count) * math.log(self.size / self.bit_array.count(False)))
 
     def __iand__(self, other: 'BloomFilter'):
+        assert (self.bit_array.length(), self.hash_count) == (other.bit_array.length(), other.hash_count)
         self.bit_array &= other.bit_array
         return self
 
     def __and__(self, other: 'BloomFilter'):
+        assert (self.bit_array.length(), self.hash_count) == (other.bit_array.length(), other.hash_count)
         result = BloomFilter(self.items_count, self.fp_prob)
         result.bit_array = self.bit_array & other.bit_array
         return result
 
     def __ior__(self, other: 'BloomFilter'):
+        assert (self.bit_array.length(), self.hash_count) == (other.bit_array.length(), other.hash_count)
         self.bit_array |= other.bit_array
         return self
 
     def __or__(self, other: 'BloomFilter'):
+        assert (self.bit_array.length(), self.hash_count) == (other.bit_array.length(), other.hash_count)
         result = BloomFilter(self.items_count, self.fp_prob)
         result.bit_array = self.bit_array | other.bit_array
         return result
@@ -64,27 +66,23 @@ class BloomFilter:
     def __repr__(self):
         return f'{self.bit_array.to01()}'
 
+    def copy(self):
+        f = BloomFilter(self.items_count, self.fp_prob)
+        f.bit_array = self.bit_array.copy()
+        return f
+
     def set_content(self, bitstring: str):
         self.bit_array = bitarray(bitstring)
+
+    def bulk_add(self, items):
+        for item in items:
+            self.add(item)
 
 
 def update_progress(progress, total):
     print("\rProgress: [{0:50s}] {1:.1f}% ({2}/{3})".format('#' * int(progress / total * 50), progress / total * 100, progress, total), end="", flush=True)
     if progress == total:
         print()
-
-
-def plot_histogram(data, x_label=None, y_label=None, title=None, bins=None):
-    plt.figure()
-    plt.title(title)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.hist(data, color='blue', bins=bins or 100)
-    plt.show()
-
-
-def log(message):
-    print(f'---{message}---')
 
 
 def iter_with_progress(iterable: Iterable, total_length: int = None, start_message: str = None):

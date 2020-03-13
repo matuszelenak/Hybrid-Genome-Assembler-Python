@@ -9,14 +9,15 @@ from structures import GenomeMetaData, BASES, GenomeRead
 
 
 class GenomeReadGenerator:
-    def __init__(self, genome_size: int, coverage: int, read_length: int, difference_rate: float, circular: bool = True):
+    def __init__(self, genome_size: int, coverage: int, read_length: int, difference_rate: float, circular: bool = True, categories=None):
         self.meta = GenomeMetaData(
             genome_size=genome_size,
             coverage=coverage,
             read_length=read_length,
             num_of_reads=self.get_num_of_reads(genome_size, coverage, read_length),
             difference=difference_rate,
-            circular=circular
+            circular=circular,
+            categories=categories or ('A', 'B')
         )
 
     @staticmethod
@@ -48,12 +49,12 @@ class GenomeReadGenerator:
             read_seq = sequence[beginning:beginning + read_length]
             if beginning + read_length > len(sequence):
                 read_seq += sequence[:(beginning + read_length) % len(sequence)]
-            yield GenomeRead(label=f'{label_prefix}-{read_id}', sequence=''.join(read_seq))
+            yield GenomeRead(label=f'{label_prefix}-{read_id}', sequence=''.join(read_seq), category=label_prefix)
 
     def get_reads(self):
         sequence_a, sequence_b = self.generate_sequences(length=self.meta.genome_size, difference_rate=self.meta.difference)
-        reads_a = self.reads_from_sequence(sequence_a, self.meta.coverage // 2, self.meta.read_length, 'A', self.meta.circular)
-        reads_b = self.reads_from_sequence(sequence_b, self.meta.coverage // 2, self.meta.read_length, 'B', self.meta.circular)
+        reads_a = self.reads_from_sequence(sequence_a, self.meta.coverage // 2, self.meta.read_length, self.meta.categories[0], self.meta.circular)
+        reads_b = self.reads_from_sequence(sequence_b, self.meta.coverage // 2, self.meta.read_length, self.meta.categories[1], self.meta.circular)
         a_exhausted, b_exhausted = False, False
         while True:
             if random.randint(0, 1) == 0:
@@ -73,7 +74,7 @@ class GenomeReadGenerator:
 
 parser = argparse.ArgumentParser()
 parser.add_argument('filename', type=str, help='File path of the generated read file')
-parser.add_argument('-n', dest='genome_size', nargs='?', default=10000, type=int, help='Size of the two reference genomes')
+parser.add_argument('-n', dest='genome_size', nargs='?', default=100000, type=int, help='Size of the two reference genomes')
 parser.add_argument('-c', dest='coverage', nargs='?', default=30, type=int, help='Coverage of the reads')
 parser.add_argument('-r', dest='read_length', nargs='?', default=150, type=int, help='Read length')
 parser.add_argument('-d', dest='difference', nargs='?', default=0.05, type=float, help='Difference rate between the two sequences')

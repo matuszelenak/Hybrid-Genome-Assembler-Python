@@ -2,7 +2,6 @@ import json
 from typing import Iterable, Generator
 
 from structures import GenomeMetaData, GenomeRead, GenomeReadData
-from utils import BloomFilter
 
 
 class GenomeReader:
@@ -26,10 +25,11 @@ class GenomeReader:
         while True:
             label = self.file.readline().strip()[1:]
             sequence = self.file.readline().strip()
+            category = label.split('-')[0]
             if not (label and sequence):
                 return
 
-            yield GenomeRead(label=label, sequence=sequence)
+            yield GenomeRead(label=label, sequence=sequence, category=category)
 
 
 class GenomeWriter:
@@ -65,14 +65,8 @@ class GenomeReadDataReader:
 
     def get_read_data(self) -> Generator[GenomeReadData, None, None]:
         j = json.load(self.file)
-        bloom_fp_prob = j['bloom_config']['fp_prob']
-        bloom_items_count = j['bloom_config']['items_count']
         for read_json in j['reads']:
-            obj = GenomeReadData.from_json(read_json)
-            obj.characteristic_kmers = BloomFilter(bloom_items_count, bloom_fp_prob)
-            obj.characteristic_kmers.set_content(read_json['characteristic_kmers'])
-
-            yield obj
+            yield GenomeReadData.from_json(read_json)
 
 
 class GenomeReadDataWriter:
@@ -87,14 +81,8 @@ class GenomeReadDataWriter:
         self.file.close()
 
     def write(self, read_data: Iterable[GenomeReadData]):
-        bloom_filter = next(iter(read_data)).characteristic_kmers
-        j = {
-            'bloom_config': {
-                'fp_prob': bloom_filter.fp_prob,
-                'items_count': bloom_filter.items_count
-            },
+        json.dump({
             'reads': [
                 read.to_json() for read in read_data
             ]
-        }
-        json.dump(j, self.file, indent=4)
+        }, self.file)
