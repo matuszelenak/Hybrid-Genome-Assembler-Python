@@ -1,4 +1,5 @@
 import json
+import os
 from typing import Iterable, Generator
 
 from structures import GenomeMetaData, GenomeRead, GenomeReadData
@@ -86,3 +87,12 @@ class GenomeReadDataWriter:
                 read.to_json() for read in read_data
             ]
         }, self.file)
+
+
+def get_file_type(filename):
+    _, ext = os.path.splitext(filename)
+    if ext.lower() in ('.fasta', '.fa'):
+        return 'fasta'
+    if ext.lower() in ('.fq', '.fastq'):
+        return 'fastq'
+    return None
