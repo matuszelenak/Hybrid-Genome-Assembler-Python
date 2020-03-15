@@ -13,6 +13,7 @@ from Bio.SeqRecord import SeqRecord
 from Bio.Alphabet.IUPAC import unambiguous_dna as DNA
 
 from file_utils import get_file_type
+from structures import GenomeReadsMetaData
 
 
 class ReadGeneratorBackend:
@@ -33,9 +34,11 @@ class ArtIlluminaBackend(ReadGeneratorBackend):
         SeqIO.write([record], temporary_file, 'fasta')
 
         command = ['art_illumina', '-ss', 'HS25', '-l', str(read_length), '-f', str(coverage), '-na', '-i', temporary_file, '-o', output_file]
-        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE).wait()
+        subprocess.Popen(command).wait()
 
-        yield from SeqIO.parse(f'{output_file}.fq', 'fastq')
+        for read_record in SeqIO.parse(f'{output_file}.fq', 'fastq'):
+            read_record.description = record.id
+            yield read_record
 
         os.remove(temporary_file)
         os.remove(f'{output_file}.fq')
@@ -51,14 +54,12 @@ class CustomReadGenerator(ReadGeneratorBackend):
         for read_id, beginning in enumerate(read_beginnings):
             yield SeqRecord(
                 record.seq[beginning: beginning + read_length],
-                id=f'{label_prefix}-{read_id}'
+                id=f'{label_prefix}-{read_id}',
+                description=record.id
             )
 
 
-get_backend = {
-    'custom': CustomReadGenerator,
-    'art': ArtIlluminaBackend
-}.get
+get_backend = {'custom': CustomReadGenerator, 'art': ArtIlluminaBackend}.get
 
 
 def generate_mutated_sequence_pair(genome_size: int, difference_rate: float) -> Tuple[SeqRecord, SeqRecord]:
@@ -102,14 +103,32 @@ if not args.input_files and not all([args.genome_size, args.difference_rate]):
     raise ValueError('Either specify 2 input files or parameters of the genome for mutation')
 
 
+meta_kwargs = {}
 if args.input_files:
     sequences = [SeqIO.read(filename, format=get_file_type(filename)) for filename in args.input_files]
+    meta_kwargs.update({
+        'genome_size': max(len(record) for record in sequences)
+    })
 else:
     original, mutated = generate_mutated_sequence_pair(args.genome_size, args.difference_rate)
     sequences = [original, mutated]
+    meta_kwargs.update({
+        'genome_size': args.genome_size,
+        'difference': args.difference_rate,
+    })
 
 backend: ReadGeneratorBackend = get_backend(args.backend)
 reads = itertools.chain.from_iterable(backend.reads_from_sequence(seq, args.coverage, args.read_length) for seq in sequences)
-SeqIO.write(reads, args.output_filename, 'fasta')
+read_count = SeqIO.write(reads, args.output_filename, 'fasta')
 
-# TODO also write metadata somewhere
+meta_kwargs.update({
+    'read_length': args.read_length,
+    'coverage': args.coverage,
+    'num_of_reads': read_count,
+    'categories': [record.id for record in sequences],
+    'alphabet': DNA.letters
+})
+
+meta = GenomeReadsMetaData(**meta_kwargs)
+with open(f'{args.output_filename}_meta.json', 'w') as f:
+    f.write(str(meta))

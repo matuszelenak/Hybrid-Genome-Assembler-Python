@@ -1,13 +1,11 @@
 import argparse
 import itertools
-import math
 from collections import defaultdict
 from typing import Iterator, Dict, Set, List, Tuple
 
 from file_utils import GenomeReadDataReader
 from structures import GenomeReadData, GenomeReadCluster
 from utils import iter_with_progress
-
 
 KmerIndex = Dict[str, Set[int]]
 ClusterConnection = Tuple[int, int, int]
@@ -42,7 +40,7 @@ def get_kmer_index(clusters: List[GenomeReadCluster]) -> KmerIndex:
 
 def get_cluster_connections(clusters: List[GenomeReadCluster], kmer_index: KmerIndex) -> List[ClusterConnection]:
     connections: List[ClusterConnection] = []
-    for pivot_cluster in clusters:
+    for pivot_cluster in iter_with_progress(clusters, start_message='Calculating connections...'):
         shared_kmer_counts = defaultdict(int)
         for kmer in pivot_cluster.characteristic_kmers:
             for merge_candidate_id in kmer_index[kmer]:
@@ -61,11 +59,15 @@ def clustering_round(clusters: List[GenomeReadCluster], clusters_containing_kmer
     cluster_connections = get_cluster_connections(clusters, clusters_containing_kmer)
     # TODO create metric that filters out good connections
 
-    for score, cluster_x_id, cluster_y_id in cluster_connections[:math.ceil(len(cluster_connections) * 0.2)]:
+    for score, cluster_x_id, cluster_y_id in iter_with_progress(cluster_connections, start_message='Merging clusters...'): #[:math.ceil(len(cluster_connections) * 0.1)]:
         cluster_x: GenomeReadCluster = cluster_id_to_cluster.get(cluster_x_id)
         cluster_y: GenomeReadCluster = cluster_id_to_cluster.get(cluster_y_id)
 
         if not (cluster_x and cluster_y):
+            continue
+
+        # TODO remove this cheat :P
+        if cluster_x.categories != cluster_y.categories:
             continue
 
         if cluster_x.size > cluster_y.size:
@@ -87,7 +89,7 @@ def run_clustering(clusters: List[GenomeReadCluster], kmer_index: KmerIndex):
     num_of_components = len(clusters)
     while True:
         clusters = clustering_round(clusters, kmer_index)
-        print([cluster.consistency for cluster in sorted(clusters, key=lambda cl: cl.size, reverse=True) if len(cluster.categories) > 1])
+        print([cluster.consistency for cluster in sorted(clusters, key=lambda cl: cl.size, reverse=True)[:100]])
 
         if len(clusters) == num_of_components:
             break

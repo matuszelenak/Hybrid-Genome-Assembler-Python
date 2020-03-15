@@ -1,34 +1,19 @@
 import json
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import List, Set, Generator, Tuple
-
-BASES = ['A', 'C', 'G', 'T']
-
-
-@dataclass
-class GenomeRead:
-    label: str
-    category: str
-    sequence: str
-
-    def iterate_kmers(self, k: int) -> Generator[str, None, None]:
-        for start in range(len(self.sequence) - (k - 1)):
-            yield self.sequence[start:start + k]
-
-    def __str__(self):
-        return f'>{self.label}\n{"".join(self.sequence)}'
+from io import StringIO
+from typing import List, Set, Union
 
 
 @dataclass
-class GenomeMetaData:
+class GenomeReadsMetaData:
     genome_size: int
     num_of_reads: int
-    coverage: int = 1
-    difference: float = 0
-    read_length: int = 0
-    circular: bool = True
-    categories: Tuple[str, str] = ('A', 'B')
+    coverage: int
+    read_length: int
+    difference: float = None
+    categories: List[str] = None
+    alphabet: List[str] = None
 
     def __str__(self):
         return json.dumps(dict(
@@ -37,7 +22,8 @@ class GenomeMetaData:
             num_of_reads=self.num_of_reads,
             read_length=self.read_length,
             difference=self.difference,
-            categories=self.categories
+            categories=self.categories,
+            alphabet=self.alphabet
         ), indent=4)
 
     @classmethod
@@ -50,6 +36,13 @@ class GenomeMetaData:
             return
         except TypeError:
             return
+
+    @classmethod
+    def from_file(cls, f: Union[str, StringIO]):
+        if isinstance(f, str):
+            f = open(f, 'r')
+
+        return cls.from_string(f.read())
 
 
 @dataclass
@@ -106,7 +99,11 @@ class GenomeReadCluster:
 
     @property
     def categories(self) -> Set[str]:
-        return set([read.category for read in self.reads])
+        if hasattr(self, '_categories'):
+            return self._categories
+
+        self._categories = set([read.category for read in self.reads])
+        return self._categories
 
     def copy(self):
         return GenomeReadCluster(
@@ -118,6 +115,7 @@ class GenomeReadCluster:
     def __ior__(self, other: 'GenomeReadCluster'):
         self.reads.extend(other.reads)
         self.characteristic_kmers |= other.characteristic_kmers
+        self.categories.union(other.categories)
         return self
 
     def __or__(self, other: 'GenomeReadCluster'):
