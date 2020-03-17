@@ -2,7 +2,7 @@ import json
 from collections import defaultdict
 from dataclasses import dataclass
 from io import StringIO
-from typing import List, Set, Union
+from typing import List, Set, Union, NamedTuple
 
 
 @dataclass
@@ -131,3 +131,12 @@ class GenomeReadCluster:
 
     def __repr__(self):
         return f'#{self.reference_id}({len(self.characteristic_kmers)})[{self.consistency}]'
+
+
+class ClusterMergeCase(NamedTuple):
+    cluster_x_size: int
+    cluster_y_size: int
+    cluster_x_kmers: int
+    cluster_y_kmers: int
+    shared_kmers: int
+    merge: int

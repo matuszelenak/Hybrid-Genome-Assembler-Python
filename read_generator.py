@@ -33,7 +33,7 @@ class ArtIlluminaBackend(ReadGeneratorBackend):
         output_file = f'{record.id}_tmp'
         SeqIO.write([record], temporary_file, 'fasta')
 
-        command = ['art_illumina', '-ss', 'HS25', '-l', str(read_length), '-f', str(coverage), '-na', '-i', temporary_file, '-o', output_file]
+        command = ['art_illumina', '-ss', 'HS25', '-q', '-l', str(read_length), '-f', str(coverage), '-na', '-i', temporary_file, '-o', output_file]
         subprocess.Popen(command).wait()
 
         for read_record in SeqIO.parse(f'{output_file}.fq', 'fastq'):
@@ -55,7 +55,8 @@ class CustomReadGenerator(ReadGeneratorBackend):
             yield SeqRecord(
                 record.seq[beginning: beginning + read_length],
                 id=f'{label_prefix}-{read_id}',
-                description=record.id
+                description=record.id,
+                letter_annotations={'phred_quality': [41 for _ in range(read_length)]}
             )
 
 
@@ -73,8 +74,20 @@ def generate_mutated_sequence_pair(genome_size: int, difference_rate: float) -> 
     mutated_sequence_indices = (original_sequence_indices + mutation_index_shift) % len(DNA.letters)
 
     original_sequence = indices_to_strand(original_sequence_indices)
+    original_record = SeqRecord(
+        Seq(original_sequence, DNA),
+        id=f'Original',
+    )
     mutated_sequence = indices_to_strand(mutated_sequence_indices)
-    return SeqRecord(Seq(original_sequence, DNA), id='Original'), SeqRecord(Seq(mutated_sequence, DNA), id='Mutated')
+    mutated_record = SeqRecord(
+        Seq(mutated_sequence, DNA),
+        id='Mutated'
+    )
+
+    SeqIO.write(original_record, f'sequence_data/original_{genome_size}.fasta', 'fasta')
+    SeqIO.write(mutated_record, f'sequence_data/mutated_{genome_size}_{difference_rate}.fasta', 'fasta')
+
+    return original_record, mutated_record
 
 
 def mix_reads(*read_lists: List[SeqRecord], shuffle=False) -> Iterable[SeqRecord]:
@@ -96,7 +109,7 @@ parser.add_argument('-b', dest='backend', default='Custom', choices=['custom', '
 parser.add_argument('-c', dest='coverage', nargs='?', default=30, type=int, help='Coverage of the reads')
 parser.add_argument('-r', dest='read_length', nargs='?', default=150, type=int, help='Read length')
 
-parser.add_argument('-o', dest='output_filename', type=str, help='Name of the output file with reads', default='out.fasta')
+parser.add_argument('-o', dest='output_prefix', type=str, help='Prefix of the output file with reads', default='out')
 args = parser.parse_args()
 
 if not args.input_files and not all([args.genome_size, args.difference_rate]):
@@ -117,9 +130,11 @@ else:
         'difference': args.difference_rate,
     })
 
+output_prefix = f'{args.output_prefix}_{args.backend}_{args.read_length}b_{args.coverage}x.fq'
+
 backend: ReadGeneratorBackend = get_backend(args.backend)
 reads = itertools.chain.from_iterable(backend.reads_from_sequence(seq, args.coverage, args.read_length) for seq in sequences)
-read_count = SeqIO.write(reads, args.output_filename, 'fasta')
+read_count = SeqIO.write(reads, f'{output_prefix}', 'fastq')
 
 meta_kwargs.update({
     'read_length': args.read_length,
@@ -130,5 +145,5 @@ meta_kwargs.update({
 })
 
 meta = GenomeReadsMetaData(**meta_kwargs)
-with open(f'{args.output_filename}_meta.json', 'w') as f:
+with open(f'{output_prefix}_meta.json', 'w') as f:
     f.write(str(meta))

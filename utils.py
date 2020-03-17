@@ -1,11 +1,35 @@
-from typing import Iterable
+import os
+import pickle
+from collections import defaultdict
+from typing import Iterable, List
 
-from Bio import Seq
+from Bio.SeqRecord import SeqRecord
 
 
-def iterate_kmers_in_sequence(sequence: Seq, k: int):
-    for start in range(len(sequence) - (k - 1)):
-        yield sequence[start:start + k]
+def minimum_base_quality(minimum: int, qualities: List[int]):
+    if min(qualities) < minimum:
+        return False
+
+    return True
+
+
+def minimum_and_average(minimum, average, qualities: List[int]):
+    if min(qualities) < minimum or sum(qualities) / len(qualities) < average:
+        return False
+    return True
+
+
+def iterate_kmers_in_record(record: SeqRecord, k: int, quality_filter=None):
+    sequence = str(record.seq)
+    if callable(quality_filter):
+        qualities: List[int] = record.letter_annotations['phred_quality']
+        for start in range(len(sequence) - (k - 1)):
+            kmer_quality = qualities[start:start + k]
+            if quality_filter(kmer_quality):
+                yield sequence[start:start + k]
+    else:
+        for start in range(len(sequence) - (k - 1)):
+            yield sequence[start:start + k]
 
 
 def update_progress(progress, total):
@@ -29,3 +53,58 @@ def iter_with_progress(iterable: Iterable, total_length: int = None, start_messa
 def split_into_chunks(iterable: list, chunk_length: int):
     for beginning in range(0, len(iterable), chunk_length):
         yield iterable[beginning:beginning + chunk_length]
+
+
+def dd():
+    return defaultdict(int)
+
+
+class Cache:
+    global_kwargs = {}
+
+    def get_key_from_arguments(self, *args, function_specific_kwargs=None, **kwargs):
+        function_specific_kwargs = function_specific_kwargs or {}
+        primitives = (int, str, bool, float)
+
+        valid_args = []
+        valid_kwargs = {}
+        for arg in args:
+            if isinstance(arg, primitives):
+                valid_args.append(arg)
+
+        for kw, value in kwargs.items():
+            if isinstance(value, primitives):
+                valid_kwargs[kw] = value
+
+        valid_kwargs.update({
+            kw: str(val) for kw, val in function_specific_kwargs.items()
+        })
+
+        valid_kwargs.update({
+            kw: str(val) for kw, val in self.global_kwargs.items()
+        })
+
+        return ';'.join(map(str, valid_args)) + '|' + ';'.join(f'{kw}={str(valid_kwargs[kw])}' for kw in sorted(valid_kwargs.keys()))
+
+    def checkpoint(self, **cache_kwargs):
+        def decorator(function):
+            def wrapper(*args, **kwargs):
+                key = self.get_key_from_arguments(*args, function_specific_kwargs=cache_kwargs, **kwargs)
+                path = os.path.join('cache', function.__name__ + ':' + key)
+                if os.path.exists(path):
+                    with open(path, 'rb') as f:
+                        return pickle.load(f)
+
+                result = function(*args, **kwargs)
+
+                if not os.path.exists('cache'):
+                    os.mkdir('cache')
+
+                with open(path, 'wb') as f:
+                    pickle.dump(result, f)
+
+                return result
+
+            return wrapper
+
+        return decorator
