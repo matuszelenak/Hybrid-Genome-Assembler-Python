@@ -1,8 +1,9 @@
 import argparse
 import math
+import os
 from collections import defaultdict
 from functools import lru_cache, partial
-from typing import Iterable, Tuple, Dict, Generator
+from typing import Iterable, Tuple, Dict, List
 
 import numpy as np
 from Bio import SeqIO
@@ -10,10 +11,10 @@ from Bio.SeqRecord import SeqRecord
 from matplotlib import pyplot as plt
 
 from file_utils import GenomeReadDataWriter
-from structures import GenomeReadData, GenomeReadsMetaData
-from utils import iter_with_progress, iterate_kmers_in_record, minimum_and_average, Cache, dd
+from structures import GenomeReadData, GenomeReadsMetaData, KmerInfo
+from utils import iter_with_progress, minimum_and_average, Cache, iterate_kmer_signatures, with_category
 
-KmerOccurrences = Dict[str, Dict[str, int]]
+KmerOccurrences = Dict[str, KmerInfo]
 KmerSpecificity = Dict[int, Dict[Tuple[int, int], int]]
 
 MIN_QUALITY = 10
@@ -42,11 +43,10 @@ class KmerHistogramPlotter:
     @classmethod
     def get_kmer_specificity(cls, occurrences: KmerOccurrences) -> KmerSpecificity:
         coverage_to_specificity_bins: KmerSpecificity = defaultdict(lambda: defaultdict(int))
-        for kmer, counts in occurrences.items():
-            total_count = sum(counts.values())
-            prevalent_count = max(counts.values())
-            specificity = prevalent_count / total_count * 100
-            coverage_to_specificity_bins[total_count][cls.get_value_bracket(specificity)] += 1
+        for kmer, info in occurrences.items():
+            prevalent_count = max(info.in_second_category, info.in_second_category)
+            specificity = prevalent_count / info.total_count * 100
+            coverage_to_specificity_bins[info.total_count][cls.get_value_bracket(specificity)] += 1
 
         return coverage_to_specificity_bins
 
@@ -82,12 +82,13 @@ class KmerHistogramPlotter:
 
 @cache.checkpoint(min_quality=MIN_QUALITY, avg_quality=AVG_MIN_QUALITY)
 def kmer_occurrences(reads: Iterable[SeqRecord], k: int, read_count: int = None) -> KmerOccurrences:
-    occurrences = defaultdict(dd)
+    occurrences = defaultdict(KmerInfo)
     cnt = 0
     total = 0
     for read_record in iter_with_progress(reads, total_length=read_count, start_message=f'Computing occurrences of {k}-mers'):
-        for kmer in iterate_kmers_in_record(read_record, k, min_and_avg):
-            occurrences[kmer][read_record.description.split(' ')[-1]] += 1
+        for kmer in iterate_kmer_signatures(read_record, k, min_and_avg):
+            occurrences[kmer].in_first_category += read_record.category_id == 0
+            occurrences[kmer].in_second_category += read_record.category_id == 1
             cnt += 1
 
         total += (len(read_record) - (k - 1))
@@ -98,34 +99,44 @@ def kmer_occurrences(reads: Iterable[SeqRecord], k: int, read_count: int = None)
 
 
 @cache.checkpoint(min_quality=MIN_QUALITY, avg_quality=AVG_MIN_QUALITY)
-def get_annotated_read_data(reads: Iterable[SeqRecord], occurrences: KmerOccurrences, lower: int, upper: int, read_count: int) -> Generator[GenomeReadData, None, None]:
-    characteristic_kmers = set(sequence for sequence, counts in occurrences.items() if lower <= sum(counts.values()) <= upper)
+def get_annotated_read_data(reads: Iterable[SeqRecord], occurrences: KmerOccurrences, lower: int, upper: int, read_count: int) -> List[GenomeReadData]:
+    characteristic_kmers = set(sequence for sequence, info in occurrences.items() if lower <= info.total_count <= upper)
     k = len(next(iter(characteristic_kmers)))
 
+    result = []
     for read_record in iter_with_progress(reads, total_length=read_count, start_message='Annotating read data...'):
         read_characteristic_kmers = set()
-        for kmer in iterate_kmers_in_record(read_record, k, min_and_avg):
+        for kmer in iterate_kmer_signatures(read_record, k, min_and_avg):
             if kmer in characteristic_kmers:
                 read_characteristic_kmers.add(kmer)
 
-        yield GenomeReadData(label=str(read_record.id), category=read_record.description.split(' ')[-1], characteristic_kmers=read_characteristic_kmers)
+        result.append(GenomeReadData(label=str(read_record.id), category=read_record.category_id, characteristic_kmers=read_characteristic_kmers))
+
+    return result
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('filename', type=str, help='File path of the generated read file')
+parser.add_argument('read_paths', type=str, nargs=2, help='File path of the generated read file')
+parser.add_argument('-o', dest='read_data_path', type=str, default='read_data/reads.json', help='Path to output file')
 args = parser.parse_args()
 
-cache.global_kwargs['filename'] = args.filename.replace('/', '')
+cache.global_kwargs['filename'] = ''.join(filename.replace('/', '') for filename in args.read_paths)
 
-meta = GenomeReadsMetaData.from_file(f'{args.filename}_meta.json')
+metas = [
+    GenomeReadsMetaData.from_file(f'{os.path.splitext(path)[0]}_meta.json')
+    for path in args.read_paths
+]
+max_genome_size = max([meta.genome_size for meta in metas])
+max_coverage = max([meta.coverage for meta in metas])
+total_reads = sum([meta.num_of_reads for meta in metas])
 
-k_guess = math.ceil(math.log(meta.genome_size, len(meta.alphabet))) + 3
+k_guess = math.ceil(math.log(max_genome_size, 4)) + 3
 k_value_occurrences = {
-    k_option: kmer_occurrences(SeqIO.parse(args.filename, 'fastq'), k_option, meta.num_of_reads)
+    k_option: kmer_occurrences(with_category(*[SeqIO.parse(filename, 'fastq') for filename in args.read_paths]), k_option, total_reads)
     for k_option in range(k_guess, k_guess + 2)
 }
 
-KmerHistogramPlotter.plot_histograms(k_value_occurrences, meta.coverage * 4)
+KmerHistogramPlotter.plot_histograms(k_value_occurrences, max_coverage * 3)
 
 print('Enter the selected k, minimal and maximal coverage')
 response = input()
@@ -133,7 +144,8 @@ if response == 'q':
     exit()
 
 k_length, cov_low, cov_high = [int(x) for x in response.split()]
-read_data = list(get_annotated_read_data(SeqIO.parse(args.filename, 'fastq'), k_value_occurrences[k_length], cov_low, cov_high, meta.num_of_reads))
+all_reads = with_category(*[SeqIO.parse(filename, 'fastq') for filename in args.read_paths])
+read_data = get_annotated_read_data(all_reads, k_value_occurrences[k_length], cov_low, cov_high, total_reads)
 
-with GenomeReadDataWriter(f'{args.filename}__read_data.json') as w:
+with GenomeReadDataWriter(f'{args.read_data_path}') as w:
     w.write(read_data)

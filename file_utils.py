@@ -38,7 +38,7 @@ class GenomeReadDataWriter:
             'reads': [
                 read.to_json() for read in read_data
             ]
-        }, self.file)
+        }, self.file, indent=2)
 
 
 def get_file_type(filename):

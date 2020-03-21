@@ -2,7 +2,7 @@ import numpy as np
 from keras.models import Sequential
 from keras.layers import Dense
 
-dataset = np.loadtxt('read_data/ecoli.fasta__read_data.json__merge_cases.csv', delimiter=',')
+dataset = np.loadtxt('read_data/ecoli.fasta_art_150b_15x.fq__read_data.json__merge_cases.csv', delimiter=',')
 np.random.shuffle(dataset)
 
 X = dataset[:, 0:5]

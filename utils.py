@@ -1,7 +1,7 @@
 import os
 import pickle
-from collections import defaultdict
-from typing import Iterable, List
+from functools import lru_cache
+from typing import Iterable, List, Generator
 
 from Bio.SeqRecord import SeqRecord
 
@@ -19,6 +19,12 @@ def minimum_and_average(minimum, average, qualities: List[int]):
     return True
 
 
+@lru_cache(maxsize=100000)
+def sequence_complement(sequence: str):
+    c = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}.get
+    return ''.join(map(c, reversed(sequence)))
+
+
 def iterate_kmers_in_record(record: SeqRecord, k: int, quality_filter=None):
     sequence = str(record.seq)
     if callable(quality_filter):
@@ -30,6 +36,11 @@ def iterate_kmers_in_record(record: SeqRecord, k: int, quality_filter=None):
     else:
         for start in range(len(sequence) - (k - 1)):
             yield sequence[start:start + k]
+
+
+def iterate_kmer_signatures(record: SeqRecord, k: int, quality_filter=None):
+    for kmer in iterate_kmers_in_record(record, k, quality_filter=quality_filter):
+        yield min(kmer, sequence_complement(kmer))
 
 
 def update_progress(progress, total):
@@ -55,8 +66,11 @@ def split_into_chunks(iterable: list, chunk_length: int):
         yield iterable[beginning:beginning + chunk_length]
 
 
-def dd():
-    return defaultdict(int)
+def with_category(*reads_by_category: Iterable[SeqRecord]) -> Generator[SeqRecord, None, None]:
+    for category_id, category_reads in enumerate(reads_by_category):
+        for record in category_reads:
+            record.category_id = category_id
+            yield record
 
 
 class Cache:

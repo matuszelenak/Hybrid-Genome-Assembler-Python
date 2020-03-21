@@ -6,24 +6,28 @@ from typing import List, Set, Union, NamedTuple
 
 
 @dataclass
+class KmerInfo:
+    in_first_category: int = 0
+    in_second_category: int = 0
+
+    @property
+    def total_count(self):
+        return self.in_first_category + self.in_second_category
+
+
+@dataclass
 class GenomeReadsMetaData:
     genome_size: int
     num_of_reads: int
     coverage: int
     read_length: int
-    difference: float = None
-    categories: List[str] = None
-    alphabet: List[str] = None
 
     def __str__(self):
         return json.dumps(dict(
             genome_size=self.genome_size,
             coverage=self.coverage,
             num_of_reads=self.num_of_reads,
-            read_length=self.read_length,
-            difference=self.difference,
-            categories=self.categories,
-            alphabet=self.alphabet
+            read_length=self.read_length
         ), indent=4)
 
     @classmethod
@@ -48,7 +52,7 @@ class GenomeReadsMetaData:
 @dataclass
 class GenomeReadData:
     label: str
-    category: str
+    category: int
     characteristic_kmers: Set[str]
 
     @property
@@ -98,7 +102,7 @@ class GenomeReadCluster:
         return '/'.join(map(str, category_counts.values()))
 
     @property
-    def categories(self) -> Set[str]:
+    def categories(self) -> Set[int]:
         if hasattr(self, '_categories'):
             return self._categories
 

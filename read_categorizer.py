@@ -10,13 +10,16 @@ import numpy as np
 
 from file_utils import GenomeReadDataReader
 from structures import GenomeReadData, GenomeReadCluster, ClusterMergeCase
-from utils import iter_with_progress
+from utils import iter_with_progress, Cache
 
 KmerIndex = Dict[str, Set[int]]
 ClusterConnection = Tuple[int, int, int]
 
 
 # model = load_model('ecoli_model.hdf5')
+
+
+cache = Cache()
 
 
 def get_clusters_from_reads(reads: Iterator[GenomeReadData]) -> List[GenomeReadCluster]:
@@ -37,6 +40,7 @@ def get_clusters_from_reads(reads: Iterator[GenomeReadData]) -> List[GenomeReadC
     return clusters
 
 
+@cache.checkpoint()
 def get_kmer_index(clusters: List[GenomeReadCluster]) -> KmerIndex:
     clusters_containing_kmer = defaultdict(set)
     for cluster in iter_with_progress(clusters, total_length=len(clusters), start_message='Building k-mer index for clusters'):
@@ -58,7 +62,7 @@ def get_cluster_connections(clusters: List[GenomeReadCluster], kmer_index: KmerI
 
         connections.extend([(shared_kmers, cluster_id, pivot_cluster.reference_id) for cluster_id, shared_kmers in shared_kmer_counts.items()])
 
-    return sorted(connections, reverse=True, key=lambda s: s[0])
+    return sorted(filter(lambda x: x[0] > 1, connections), reverse=True, key=lambda s: s[0])
 
 
 def clustering_round(clusters: List[GenomeReadCluster], clusters_containing_kmer: KmerIndex) -> Tuple[List[GenomeReadCluster], Set[ClusterMergeCase]]:
@@ -80,21 +84,21 @@ def clustering_round(clusters: List[GenomeReadCluster], clusters_containing_kmer
     # ])
     # should_merge = model.predict(model_inputs).flatten().tolist()
 
-    # for score, cluster_x_id, cluster_y_id in iter_with_progress(cluster_connections, start_message='Merging clusters...'): #[:math.ceil(len(cluster_connections) * 0.1)]:
-    #     cluster_x: GenomeReadCluster = cluster_id_to_cluster.get(cluster_x_id)
-    #     cluster_y: GenomeReadCluster = cluster_id_to_cluster.get(cluster_y_id)
-    #
-    #     merge_case_kwargs = dict(
-    #         cluster_x_size=cluster_x.size,
-    #         cluster_y_size=cluster_y.size,
-    #         cluster_x_kmers=len(cluster_x.characteristic_kmers),
-    #         cluster_y_kmers=len(cluster_y.characteristic_kmers),
-    #         shared_kmers=score,
-    #     )
-    #     if cluster_x.categories != cluster_y.categories:
-    #         merge_test_cases.append(ClusterMergeCase(merge=0, **merge_case_kwargs))
-    #     else:
-    #         merge_test_cases.append(ClusterMergeCase(merge=1, **merge_case_kwargs))
+    for score, cluster_x_id, cluster_y_id in iter_with_progress(cluster_connections, start_message='Gathering merge cases...'): #[:math.ceil(len(cluster_connections) * 0.1)]:
+        cluster_x: GenomeReadCluster = cluster_id_to_cluster.get(cluster_x_id)
+        cluster_y: GenomeReadCluster = cluster_id_to_cluster.get(cluster_y_id)
+
+        merge_case_kwargs = dict(
+            cluster_x_size=cluster_x.size,
+            cluster_y_size=cluster_y.size,
+            cluster_x_kmers=len(cluster_x.characteristic_kmers),
+            cluster_y_kmers=len(cluster_y.characteristic_kmers),
+            shared_kmers=score,
+        )
+        if cluster_x.categories != cluster_y.categories:
+            merge_test_cases.append(ClusterMergeCase(merge=0, **merge_case_kwargs))
+        else:
+            merge_test_cases.append(ClusterMergeCase(merge=1, **merge_case_kwargs))
 
     for score, cluster_x_id, cluster_y_id in iter_with_progress(cluster_connections[:math.ceil(len(cluster_connections) * 0.1)], start_message='Merging clusters...'): #[:math.ceil(len(cluster_connections) * 0.1)]:
         cluster_x: GenomeReadCluster = cluster_id_to_cluster.get(cluster_x_id)
@@ -145,6 +149,8 @@ def run_clustering(clusters: List[GenomeReadCluster], kmer_index: KmerIndex) -> 
 parser = argparse.ArgumentParser()
 parser.add_argument('filename', type=str, help='File path of the generated read file')
 args = parser.parse_args()
+
+cache.global_kwargs['read_data'] = args.filename.replace('/', '')
 
 with GenomeReadDataReader(args.filename) as r:
     c = get_clusters_from_reads(r.get_read_data())
