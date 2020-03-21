@@ -15,6 +15,9 @@ from structures import GenomeReadsMetaData
 from utils import sequence_complement
 
 
+SIMLORD_BIN = '/home/whiskas/miniconda3/envs/simlord/bin/simlord'
+
+
 class ReadGeneratorBackend:
     @staticmethod
     def get_num_of_reads(seq_length: int, coverage: int, read_length: int) -> int:
@@ -67,7 +70,28 @@ class CustomReadGenerator(ReadGeneratorBackend):
         return num_of_reads
 
 
-get_backend = {'custom': CustomReadGenerator, 'art': ArtIlluminaBackend}.get
+class PacBioBackend(ReadGeneratorBackend):
+    @staticmethod
+    def reads_from_sequence(record: SeqRecord, output_prefix: str, coverage: int, read_length: int, complement: bool = True) -> int:
+        temporary_file = f'{record.id}_tmp.fasta'
+        SeqIO.write([record], temporary_file, 'fasta')
+
+        cmd = [SIMLORD_BIN, '-rr', temporary_file, '--no-sam', '-fl', str(read_length), '--without-ns', '-c', str(coverage), '-pi', '0.001', '-pd', '0.001', '-ps', '0.01', output_prefix]
+        subprocess.Popen(cmd).wait()
+
+        os.rename(f'{output_prefix}.fastq', f'{output_prefix}.fq')
+
+        os.remove(temporary_file)
+
+        return sum(1 for _ in SeqIO.parse(f'{output_prefix}.fq', 'fastq'))
+
+
+backends = (
+    ('custom', CustomReadGenerator),
+    ('art', ArtIlluminaBackend),
+    ('pacbio', PacBioBackend)
+)
+get_backend = dict(backends).get
 
 
 def generate_mutated_sequence_pair(genome_size: int, difference_rate: float) -> Tuple[SeqRecord, SeqRecord]:
@@ -104,7 +128,7 @@ parser.add_argument('-n', dest='genome_size', nargs='?', type=int, help='Size of
 parser.add_argument('-d', dest='difference_rate', nargs='?', type=float, help='Difference rate between the two sequences')
 
 # Read parameters
-parser.add_argument('-b', dest='backend', default='Custom', choices=['custom', 'art'], help='Read generation backend: Either Art Illumina or Custom')
+parser.add_argument('-b', dest='backend', default='Custom', choices=[b[0] for b in backends], help='Read generation backend: Either Art Illumina or Custom')
 parser.add_argument('-c', dest='coverage', nargs='?', default=30, type=int, help='Coverage in reads for one sequence')
 parser.add_argument('-r', dest='read_length', nargs='?', default=150, type=int, help='Read length')
 

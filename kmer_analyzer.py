@@ -86,7 +86,7 @@ def kmer_occurrences(reads: Iterable[SeqRecord], k: int, read_count: int = None)
     cnt = 0
     total = 0
     for read_record in iter_with_progress(reads, total_length=read_count, start_message=f'Computing occurrences of {k}-mers'):
-        for kmer in iterate_kmer_signatures(read_record, k, min_and_avg):
+        for kmer in iterate_kmer_signatures(read_record, k):
             occurrences[kmer].in_first_category += read_record.category_id == 0
             occurrences[kmer].in_second_category += read_record.category_id == 1
             cnt += 1
